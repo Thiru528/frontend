@@ -30,7 +30,7 @@ const ChatScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [typing, setTyping] = useState(false);
   const [limitModalVisible, setLimitModalVisible] = useState(false);
-  const [limitModalVisible, setLimitModalVisible] = useState(false);
+
   const flatListRef = useRef();
 
   useEffect(() => {
