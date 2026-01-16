@@ -242,6 +242,7 @@ const PremiumScreen = ({ navigation }) => {
         </View>
 
         <ScrollView
+          style={{ flex: 1 }}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
