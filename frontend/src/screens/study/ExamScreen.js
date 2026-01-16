@@ -14,7 +14,8 @@ import { useAuth } from '../../context/AuthContext';
 import { examAPI } from '../../services/api';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
-import ProgressBar from '../../components/ProgressBar';
+import Component from '../../components/ProgressBar';
+import { AdService } from '../../services/AdService';
 
 const ExamScreen = ({ navigation, route }) => {
   const { colors } = useTheme();
@@ -56,6 +57,8 @@ const ExamScreen = ({ navigation, route }) => {
     setTimeLeft(300);
     setLoading(true);
     setLoadingMessage("Connecting to AI Tutor...");
+    setLoadingMessage("Connecting to AI Tutor...");
+    AdService.initialize(); // Preload ads
     loadExamQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.params?.timestamp]);
@@ -187,6 +190,10 @@ const ExamScreen = ({ navigation, route }) => {
         score: results.percentage,
         passed: results.passed
       });
+
+      // Show Interstitial Ad before navigating
+      await AdService.showInterstitial();
+
     } catch (error) {
       console.error('Failed to save exam results', error);
       // We continue to show results even if save fails, but maybe show alert?

@@ -20,6 +20,7 @@ import Card from '../../components/Card';
 import Button from '../../components/Button';
 import ProgressBar from '../../components/ProgressBar';
 import FancyLoader from '../../components/FancyLoader';
+import AdBanner from '../../components/AdBanner';
 
 const JobsScreen = ({ navigation }) => {
   const { colors } = useTheme();
@@ -375,6 +376,7 @@ const JobsScreen = ({ navigation }) => {
           }
         />
       )}
+      <AdBanner />
     </SafeAreaView>
   );
 };

@@ -25,6 +25,7 @@ import Card from '../../components/Card';
 import Button from '../../components/Button';
 import ProgressBar from '../../components/ProgressBar';
 import FancyLoader from '../../components/FancyLoader';
+import AdBanner from '../../components/AdBanner';
 
 const StudyScreen = ({ navigation }) => {
   const { colors } = useTheme();
@@ -655,6 +656,7 @@ const StudyScreen = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+      <AdBanner />
     </SafeAreaView>
   );
 };

@@ -4,6 +4,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import * as Linking from 'expo-linking';
 
 import AuthNavigator from './src/navigation/AuthNavigator';
 import MainNavigator from './src/navigation/MainNavigator';
@@ -11,6 +12,7 @@ import LoadingScreen from './src/components/LoadingScreen';
 import { ThemeProvider } from './src/context/ThemeContext';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { registerForPushNotificationsAsync } from './src/services/notificationService';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 const Stack = createStackNavigator();
 
@@ -35,8 +37,53 @@ function AppContent() {
     return <LoadingScreen />;
   }
 
+  const linking = {
+    prefixes: [Linking.createURL('/'), 'careerloop://'],
+    config: {
+      screens: {
+        Auth: {
+          screens: {
+            Login: 'login',
+            Register: 'register',
+          },
+        },
+        Main: {
+          screens: {
+            MainTabs: {
+              screens: {
+                Dashboard: 'home',
+                Resume: {
+                  screens: {
+                    ResumeMain: 'resume',
+                    ResumeAnalysis: 'resume/analysis',
+                  },
+                },
+                Jobs: {
+                  screens: {
+                    JobsMain: 'jobs',
+                    JobDetails: 'jobs/:id',
+                  },
+                },
+                Study: {
+                  screens: {
+                    StudyMain: 'study',
+                    StudyPlan: 'study/plan',
+                    MCQArena: 'study/mcq',
+                  },
+                },
+                Profile: 'profile',
+              },
+            },
+            Premium: 'premium',
+            Chat: 'chat',
+          },
+        },
+      },
+    },
+  };
+
   return (
-    <NavigationContainer>
+    <NavigationContainer linking={linking}>
       <StatusBar style="auto" />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {isAuthenticated ? (
@@ -52,9 +99,11 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </SafeAreaProvider>
     </ThemeProvider>
   );
 }

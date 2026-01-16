@@ -21,6 +21,7 @@ import { useAuth } from '../../context/AuthContext';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
 import FancyLoader from '../../components/FancyLoader';
+import AdBanner from '../../components/AdBanner';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
@@ -386,6 +387,7 @@ const StudyPlanScreen = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+      <AdBanner />
     </SafeAreaView>
   );
 };

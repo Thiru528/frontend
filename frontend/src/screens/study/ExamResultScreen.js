@@ -14,6 +14,7 @@ import { examAPI } from '../../services/api';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
 import ProgressBar from '../../components/ProgressBar';
+import { AdService } from '../../services/AdService';
 
 const ExamResultScreen = ({ navigation, route }) => {
   const { colors } = useTheme();
@@ -86,6 +87,34 @@ const ExamResultScreen = ({ navigation, route }) => {
   const navigateToStudy = () => {
     // Return to previous screen (Topic Detail or Study Plan)
     navigation.goBack();
+  };
+
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [loadingAd, setLoadingAd] = useState(false);
+
+  // Initialize Ads
+  React.useEffect(() => {
+    AdService.initialize();
+  }, []);
+
+  const handleUnlockAnalysis = async () => {
+    setLoadingAd(true);
+    try {
+      const rewarded = await AdService.showRewarded();
+      if (rewarded) {
+        setShowAnalysis(true);
+        Alert.alert("Unlocked!", "Detailed analysis is now available.");
+      } else {
+        // Fallback or error
+        Alert.alert("Ad Skipped", "You need to finish the ad to unlock details.");
+      }
+    } catch (error) {
+      console.log('Ad Error', error);
+      // Fallback: Unlock anyway if ad fails (User Experience Rule #6)
+      setShowAnalysis(true);
+    } finally {
+      setLoadingAd(false);
+    }
   };
 
   const navigateToDashboard = () => {
@@ -201,45 +230,60 @@ const ExamResultScreen = ({ navigation, route }) => {
           </View>
         </Card>
 
-        {/* Performance Analysis */}
-        <Card>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>
-            Performance Analysis
-          </Text>
-
-          <View style={styles.analysisItem}>
-            <View style={styles.analysisHeader}>
-              <Text style={[styles.analysisLabel, { color: colors.text }]}>
-                Overall Performance
+        {/* Performance Analysis (LOCKED) */}
+        {!showAnalysis ? (
+          <Card>
+            <View style={{ alignItems: 'center', padding: 10 }}>
+              <Ionicons name="lock-closed" size={40} color={colors.primary} style={{ marginBottom: 10 }} />
+              <Text style={{ color: colors.text, fontSize: 18, fontWeight: 'bold', marginBottom: 5 }}>Detailed AI Analysis Locked</Text>
+              <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 20 }}>
+                Unlock personalized strength & weakness insights by watching a short ad.
               </Text>
-              <Text style={[styles.analysisValue, { color: getResultColor() }]}>
-                {results.percentage >= 90 ? 'Excellent' :
-                  results.percentage >= 80 ? 'Very Good' :
-                    results.percentage >= 70 ? 'Good' :
-                      results.percentage >= 60 ? 'Fair' : 'Needs Improvement'}
-              </Text>
+              <Button
+                title={loadingAd ? "Loading Ad..." : "Watch Ad to Unlock 🔓"}
+                onPress={handleUnlockAnalysis}
+                disabled={loadingAd}
+              />
             </View>
-          </View>
-
-          <View style={styles.analysisItem}>
-            <View style={styles.analysisHeader}>
-              <Text style={[styles.analysisLabel, { color: colors.text }]}>
-                Pass Status
-              </Text>
-              <Text style={[styles.analysisValue, { color: getResultColor() }]}>
-                {results.passed ? 'PASSED' : 'FAILED'}
-              </Text>
-            </View>
-            <Text style={[styles.analysisDescription, { color: colors.textSecondary }]}>
-              {results.passed
-                ? 'You have successfully passed this exam!'
-                : 'You need 70% or higher to pass. Keep studying and try again!'
-              }
+          </Card>
+        ) : (
+          <Card>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              Performance Analysis
             </Text>
-          </View>
 
+            <View style={styles.analysisItem}>
+              <View style={styles.analysisHeader}>
+                <Text style={[styles.analysisLabel, { color: colors.text }]}>
+                  Overall Performance
+                </Text>
+                <Text style={[styles.analysisValue, { color: getResultColor() }]}>
+                  {results.percentage >= 90 ? 'Excellent' :
+                    results.percentage >= 80 ? 'Very Good' :
+                      results.percentage >= 70 ? 'Good' :
+                        results.percentage >= 60 ? 'Fair' : 'Needs Improvement'}
+                </Text>
+              </View>
+            </View>
 
-        </Card>
+            <View style={styles.analysisItem}>
+              <View style={styles.analysisHeader}>
+                <Text style={[styles.analysisLabel, { color: colors.text }]}>
+                  Pass Status
+                </Text>
+                <Text style={[styles.analysisValue, { color: getResultColor() }]}>
+                  {results.passed ? 'PASSED' : 'FAILED'}
+                </Text>
+              </View>
+              <Text style={[styles.analysisDescription, { color: colors.textSecondary }]}>
+                {results.passed
+                  ? 'You have successfully passed this exam!'
+                  : 'You need 70% or higher to pass. Keep studying and try again!'
+                }
+              </Text>
+            </View>
+          </Card>
+        )}
 
         {/* Review Answers */}
         <Card>
