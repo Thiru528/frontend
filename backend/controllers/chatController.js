@@ -17,7 +17,39 @@ exports.sendMessage = async (req, res, next) => {
         const skills = await Skill.find({ user: userId });
         const studyPlan = await require('../models/StudyPlan').findOne({ user: userId, isActive: true });
 
-        // Fetch detailed recent exams
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Daily Limit Check for Free Users
+        if (!userProfile.isPremium) {
+            const lastChat = userProfile.lastChatDate ? new Date(userProfile.lastChatDate) : new Date(0);
+
+            // Normalize dates to midnight for comparison
+            const lastChatDay = new Date(lastChat);
+            lastChatDay.setHours(0, 0, 0, 0);
+            const todayDay = new Date();
+            todayDay.setHours(0, 0, 0, 0);
+
+            // Reset count if it's a new day
+            // (Using getTime() for accurate comparison)
+            if (todayDay.getTime() > lastChatDay.getTime()) {
+                console.log(`Chat Limit: New day detected for ${userProfile.name}. Resetting count.`);
+                userProfile.dailyChatCount = 0;
+                await userProfile.save({ validateBeforeSave: false });
+            }
+
+            // Enforce Limit (3 Messages)
+            // Re-fetch or use updated count
+            if (userProfile.dailyChatCount >= 3) {
+                console.log(`Chat Limit: User ${userProfile.name} hit limit (3).`);
+                return res.status(403).json({
+                    success: false,
+                    message: 'Daily chat limit reached (3/3). Upgrade to Premium for unlimited coaching.',
+                    isPremiumLock: true
+                });
+            }
+        }
+
         const recentExams = await Exam.find({ user: userId }).sort('-completedAt').limit(5);
 
         // 2. Construct Rich Context
@@ -111,10 +143,27 @@ exports.getChatHistory = async (req, res, next) => {
             .sort('createdAt')
             .limit(50); // Limit to last 50 messages
 
+        // Map to frontend format if needed, but schema matches roughly
+        const formatted = history.map(h => ({
+            id: h._id,
+            text: h.message,
+            isBot: h.sender === 'ai',
+            timestamp: h.createdAt
+        }));
+
         res.status(200).json({
             success: true,
-            data: history
+            data: formatted
         });
+    } catch (err) {
+        next(err);
+    }
+};
+
+exports.deleteChatHistory = async (req, res, next) => {
+    try {
+        await ChatHistory.deleteMany({ user: req.user.id });
+        res.status(200).json({ success: true, message: 'Chat history cleared' });
     } catch (err) {
         next(err);
     }

@@ -33,13 +33,14 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "./plugins/withRazorpay"
     ],
     "extra": {
       "eas": {
-        "projectId": "feafe0d7-a4bb-4d65-945d-bf627558e44f"
+        "projectId": "43662035-1504-44b2-86a4-e9544559b139"
       }
     },
-    "owner": "thiru25"
+    "owner": "thiru58"
   }
 }

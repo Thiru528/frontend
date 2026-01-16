@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Resume = require('../models/Resume');
 const Skill = require('../models/Skill');
+const { checkStreakDecay, updateStreak } = require('../utils/streakUtils');
 
 exports.getDashboardData = async (req, res, next) => {
     try {
@@ -42,6 +43,12 @@ exports.getDashboardData = async (req, res, next) => {
         const totalTests = await require('../models/Exam').countDocuments({ user: userId });
         const estimatedStudyHours = (completedDaysCount * 2) + Math.round(totalTests * 0.2);
 
+
+        // Check Streak Decay
+        if (checkStreakDecay(req.user)) {
+            await req.user.save();
+        }
+
         const dashboardData = {
             studyStreak: req.user.streak || 0,
             resumeScore: resumeScore,
@@ -71,5 +78,19 @@ exports.getDashboardData = async (req, res, next) => {
     } catch (error) {
         console.error("Dashboard Error:", error);
         next(error);
+    }
+};
+
+
+exports.updateStreak = async (req, res, next) => {
+    try {
+        const user = await User.findById(req.user.id);
+
+        updateStreak(user);
+
+        await user.save();
+        res.status(200).json({ success: true, streak: user.streak, message: "Streak updated" });
+    } catch (err) {
+        next(err);
     }
 };

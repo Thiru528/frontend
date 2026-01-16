@@ -40,13 +40,24 @@ exports.verifyPayment = async (req, res, next) => {
 
         const body = razorpay_order_id + "|" + razorpay_payment_id;
 
+        // DEBUG: Check if secret key is loaded (DO NOT log key itself)
+        if (!process.env.RAZORPAY_KEY_SECRET) {
+            console.error("CRITICAL: RAZORPAY_KEY_SECRET is missing in environment variables!");
+            return res.status(500).json({ success: false, message: "Server configuration error: Payment secret missing" });
+        }
+
         const expectedSignature = crypto
             .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
             .update(body.toString())
             .digest('hex');
 
-        // Allow bypass for testing/simulated flows in Development
-        const isDevBypass = process.env.NODE_ENV === 'development' && razorpay_signature === 'simulated_signature';
+        // Allow bypass for testing/simulated flows if using Test Keys or Dev Environment
+        const isTestKey = process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_ID.startsWith('rzp_test');
+        const isSimulated = razorpay_signature === 'simulated_signature';
+
+        const isDevBypass = isSimulated && (process.env.NODE_ENV === 'development' || isTestKey);
+
+        console.log(`💸 Verifying Payment: ${razorpay_order_id} | Type: ${planType} | DevBypass: ${isDevBypass}`);
 
         if (expectedSignature === razorpay_signature || isDevBypass) {
             // Payment Success

@@ -1,5 +1,6 @@
 const StudyPlan = require('../models/StudyPlan');
 const { generateCompletion } = require('../services/aiService');
+const { updateStreak } = require('../utils/streakUtils');
 
 exports.getStudyPlan = async (req, res, next) => {
     try {
@@ -45,11 +46,22 @@ Generate detailed tasks for Days 1-3. For Days 4-30, provide just the daily titl
             aiPlan = await generateCompletion(prompt, "You are a Senior Curriculum Designer.", true);
         } catch (error) {
             console.error("Custom Plan AI Failed:", error);
-            return res.status(500).json({ success: false, message: "AI generation failed, please try again." });
+            // Fallback: Generate a safe "Offline" plan
+            aiPlan = {
+                title: `Mastering ${customPrompt} (Offline)`,
+                calendar: Array.from({ length: 30 }, (_, i) => ({
+                    day: i + 1,
+                    title: `Day ${i + 1}: ${customPrompt} Concepts`,
+                    tasks: [
+                        { title: `Read Documentation for ${customPrompt}`, resourceType: "Article", resourceUrl: `https://www.google.com/search?q=${customPrompt}`, completed: false },
+                        { title: `Practice Basic Syntax`, resourceType: "Practice", resourceUrl: "", completed: false }
+                    ]
+                }))
+            };
         }
 
         let plan;
-        if (aiPlan && !aiPlan.error) {
+        if (aiPlan) {
             plan = await StudyPlan.create({
                 user: req.user.id,
                 ...aiPlan,
@@ -57,7 +69,7 @@ Generate detailed tasks for Days 1-3. For Days 4-30, provide just the daily titl
                 isActive: true
             });
         } else {
-            return res.status(500).json({ success: false, message: "Failed to parse AI response." });
+            return res.status(500).json({ success: false, message: "Plan generation failed." });
         }
 
         res.status(200).json({ success: true, data: plan });
@@ -74,25 +86,37 @@ exports.generateStudyPlan = async (req, res, next) => {
             return res.status(200).json({ success: true, data: plan });
         }
 
-        const userSkills = req.user.skills && req.user.skills.length > 0 ? req.user.skills.join(', ') : "general coding skills";
+        const Resume = require('../models/Resume');
+        const resume = await Resume.findOne({ user: req.user.id }).sort('-createdAt');
 
-        const prompt = `You are an AI study coach.
-Create a 30-day beginner-friendly study plan for a ${req.user.targetRole || 'Software Engineer'}.
-The user already knows: ${userSkills}. Focus on filling gaps for the target role.
-Return JSON only:
+        // Combine User Profile Skills + Resume Extracted Skills
+        let knownSkills = req.user.skills || [];
+        if (resume && resume.analysis && resume.analysis.extractedSkills) {
+            knownSkills = [...new Set([...knownSkills, ...resume.analysis.extractedSkills])];
+        }
+
+        const userSkillsStr = knownSkills.length > 0 ? knownSkills.join(', ') : "general coding basics";
+        const targetRole = req.user.targetRole || 'Software Engineer';
+
+        const prompt = `You are an AI Career Coach building a roadmap.
+Create a high-impact 30-day study plan to take a user from "${userSkillsStr}" to being job-ready for a "${targetRole}".
+CRITICAL: 
+- Focus on GAPS. They already know: ${userSkillsStr}. Do NOT teach them what they already know unless it's advanced depths.
+- Focus on skills REQUIRED for ${targetRole} that are missing.
+- Return JSON only:
 {
-  "title": "30 Days from ${userSkills.substring(0, 20)}... to ${req.user.targetRole}",
+  "title": "Mastering ${targetRole}",
   "calendar": [
     {
       "day": 1,
       "title": "Topic Name",
+      "skill": "Specific Skill Tag",
       "tasks": [{"title": "Watch Intro", "resourceType": "Video", "resourceUrl": "youtube_link"}]
     }
   ]
 }
-Make detialed plan for Days 1-7 (Week 1) ONLY.
+Make detailed plan for Days 1-7 (Week 1) ONLY.
 For Days 8-30, just provide a generic title per day without tasks.
-This allows fast generation.
 `;
 
         let aiPlan;
@@ -131,25 +155,35 @@ This allows fast generation.
 };
 
 exports.markTaskCompleted = async (req, res, next) => {
-    // Logic to find task in subdocument and update
-    res.status(200).json({ success: true });
-};
-
-exports.completeDay = async (req, res, next) => {
     try {
-        const { dayNumber } = req.body;
+        const { taskId } = req.params;
+        const userId = req.user.id;
+        const StudyPlan = require('../models/StudyPlan');
 
-        let plan = await StudyPlan.findOne({ user: req.user.id, isActive: true });
-        if (!plan) return res.status(404).json({ success: false, message: "No active plan found" });
+        const studyPlan = await StudyPlan.findOne({ user: userId, isActive: true });
+        if (!studyPlan) return res.status(404).json({ success: false, message: "No active plan found" });
 
-        const dayIndex = plan.calendar.findIndex(d => d.day === dayNumber);
-        if (dayIndex !== -1) {
-            plan.calendar[dayIndex].isCompleted = true;
-            await plan.save();
-            return res.status(200).json({ success: true, message: `Day ${dayNumber} completed!` });
-        } else {
-            return res.status(400).json({ success: false, message: "Day not found in plan" });
+        // Iterate through days to find the task
+        let taskFound = false;
+        for (const day of studyPlan.calendar) {
+            if (day.tasks) {
+                const task = day.tasks.id(taskId);
+                if (task) {
+                    const { completed } = req.body;
+                    // Use provided status or default to true (backward compatibility)
+                    task.completed = (completed !== undefined) ? completed : true;
+                    task.completedAt = task.completed ? new Date() : undefined;
+
+                    taskFound = true;
+                    break;
+                }
+            }
         }
+
+        if (!taskFound) return res.status(404).json({ success: false, message: "Task not found" });
+
+        await studyPlan.save();
+        res.status(200).json({ success: true, message: "Task completed", data: studyPlan });
     } catch (err) {
         next(err);
     }
@@ -190,16 +224,31 @@ exports.generateTopicLesson = async (req, res, next) => {
         let lesson;
         try {
             lesson = await generateCompletion(prompt, "You are a Tech Tutor.", true);
+
+            // Validation: Ensure AI returned valid JSON with pages
+            if (lesson.error || !lesson.pages || !Array.isArray(lesson.pages)) {
+                console.error("AI returned invalid lesson structure:", lesson);
+                throw new Error("Invalid AI Response");
+            }
+
         } catch (aiErr) {
-            console.error("Lesson Gen Failed:", aiErr);
+            console.error("Lesson Gen Failed (Using Fallback):", aiErr.message);
             // Fallback
             lesson = {
                 title: topic,
                 pages: [
-                    { title: "1. Introduction", content: `(AI Unavailable) Introduction to **${topic}**.\nPlease try again later.` }
+                    {
+                        title: "1. Overview",
+                        content: `### ${topic}\n\n**Introduction**\n${topic} is a key concept in this domain. Unfortunately, our AI could not generate the full detailed lesson right now.\n\nPlease check the resources below to learn more.`
+                    },
+                    {
+                        title: "2. Key Concepts",
+                        content: `### Key Concepts\n- Fundamentals of ${topic}\n- Best Practices\n- Common Use Cases`
+                    }
                 ],
                 resources: [
-                    { title: "Search YouTube", type: "YouTube", searchTerm: `${topic} tutorial` }
+                    { title: "Search YouTube", type: "YouTube", searchTerm: `${topic} tutorial` },
+                    { title: "Official Documentation", type: "Article", searchTerm: `${topic} documentation` }
                 ]
             };
         }
@@ -211,7 +260,101 @@ exports.generateTopicLesson = async (req, res, next) => {
     }
 };
 
-exports.updateDailyGoals = async (req, res, next) => {
-    // Placeholder - implement actual logic later if needed
-    res.status(200).json({ success: true, message: "Goals updated" });
+exports.logStudyTime = async (req, res, next) => {
+    try {
+        const { minutes } = req.body;
+        const userId = req.user.id;
+
+        const user = await require('../models/User').findById(userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        // Update total time
+        user.studyMinutes = (user.studyMinutes || 0) + (minutes || 0);
+
+        // STREAK LOGIC
+        updateStreak(user);
+
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Study time logged",
+            streak: user.streak,
+            studyMinutes: user.studyMinutes
+        });
+
+    } catch (err) {
+        next(err);
+    }
+};
+
+exports.logExamCompletion = async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+        const user = await require('../models/User').findById(userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        // Update Exam Count
+        user.dailyMcqCount = (user.dailyMcqCount || 0) + 1;
+
+        // STREAK LOGIC (Same as logStudyTime)
+        updateStreak(user);
+
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Exam logged",
+            dailyMcqCount: user.dailyMcqCount,
+            streak: user.streak
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+exports.completeDay = async (req, res, next) => {
+    try {
+        const { dayNumber } = req.body;
+        console.log(`[DEBUG] completeDay called for Day ${dayNumber}`);
+        const userId = req.user.id;
+        const StudyPlan = require('../models/StudyPlan');
+
+        const studyPlan = await StudyPlan.findOne({ user: userId, isActive: true });
+        if (!studyPlan) {
+            console.log(`[DEBUG] No active plan found`);
+            return res.status(404).json({ success: false, message: "No active plan found" });
+        }
+
+        // Coerce dayNumber to integer
+        const targetDay = parseInt(dayNumber);
+        const day = studyPlan.calendar.find(d => d.day === targetDay);
+        if (!day) return res.status(404).json({ success: false, message: "Day not found" });
+
+        day.completed = true;
+
+        // Auto-advance: if we finished current day, move next
+        if (studyPlan.currentDay <= targetDay) {
+            const nextDay = targetDay + 1;
+            console.log(`[DEBUG] Advancing currentDay from ${studyPlan.currentDay} to ${nextDay}`);
+            studyPlan.currentDay = nextDay;
+        }
+
+        await studyPlan.save();
+
+        // STREAK LOGIC
+        const user = await require('../models/User').findById(userId);
+        if (user) {
+            const { updateStreak } = require('../utils/streakUtils');
+            const oldStreak = user.streak;
+            updateStreak(user);
+            await user.save();
+            console.log(`[DEBUG] Streak updated. Old: ${oldStreak}, New: ${user.streak}`);
+        }
+
+        res.status(200).json({ success: true, message: "Day completed", data: studyPlan });
+    } catch (err) {
+        console.error("completeDay Error:", err);
+        next(err);
+    }
 };

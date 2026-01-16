@@ -7,29 +7,43 @@ const QuestionBank = require('../models/QuestionBank');
 exports.getExamQuestions = async (req, res, next) => {
     try {
         const { skillId } = req.params;
-        const count = parseInt(req.query.count) || 10;
         let validSkillId = skillId;
+        // FIX: Ensure count is an Integer for MongoDB $sample aggregation
+        const count = parseInt(req.query.count) || 10;
 
-        // If generic or random, try to pick from Resume
+        // If generic or random, PRIORITY: Resume Skills -> Target Role
         if (!validSkillId || validSkillId === 'General' || validSkillId === 'Random') {
             const Resume = require('../models/Resume');
             const resume = await Resume.findOne({ user: req.user.id }).sort('-createdAt');
+            const user = await require('../models/User').findById(req.user.id);
 
-            if (resume && resume.analysis) {
-                const skills = [
-                    ...(resume.analysis.strengths || []),
-                    ...(resume.analysis.extractedSkills || [])
+            // PRIORITY 1: Check User Profile Skills (e.g. from Signup or Resume Sync)
+            let candidateSkills = user.skills || [];
+
+            // PRIORITY 2: Check Resume Analysis directly if profile is empty
+            if (candidateSkills.length === 0 && resume && resume.analysis) {
+                candidateSkills = [
+                    ...(resume.analysis.extractedSkills || []),
+                    ...(resume.analysis.strengths || [])
                 ];
+            }
 
-                if (skills.length > 0) {
-                    // Pick random skill tailored to user
-                    validSkillId = skills[Math.floor(Math.random() * skills.length)];
-                    console.log("🎯 Personalized Quiz Topic from Resume:", validSkillId);
-                } else {
-                    validSkillId = 'General Technology';
-                }
+            // FILTER: Remove generic junk
+            candidateSkills = candidateSkills.filter(s => s && s !== 'Communication' && s !== 'Teamwork' && s !== 'Generic Skill');
+
+            // 1. Pick from Candidate Skills
+            if (candidateSkills.length > 0) {
+                const randomSkill = candidateSkills[Math.floor(Math.random() * candidateSkills.length)];
+                validSkillId = randomSkill;
+                console.log(`🎯 Skill-Based Exam Topic: ${validSkillId}`);
+            }
+            // 2. Fallback to Target Role (e.g. "Business Analyst")
+            else if (user.targetRole && user.targetRole !== 'Not specified') {
+                validSkillId = `Core Interview Questions for ${user.targetRole}`;
+                console.log(`🎯 Role-Based Exam Topic: ${validSkillId}`);
             } else {
-                validSkillId = 'General Technology';
+                // Final Fallback
+                validSkillId = 'General Software Engineering Principles';
             }
         }
 
@@ -42,17 +56,19 @@ exports.getExamQuestions = async (req, res, next) => {
         - Focus on "Output prediction", "Time Complexity", "Edge Cases", or "Conceptual understanding".
         - Make them challenging for a Junior/Mid-level developer.
         
-        OUTPUT FORMAT: Pure JSON Array.
-        [
-          {
-            "question": "Question text?",
-            "options": ["Option A", "Option B", "Option C", "Option D"],
-            "correctAnswer": 2, // INTEGER (0-3). MUST MATCH index of the correct string in 'options'.
-            "explanation": "Detailed explanation."
-          }
-        ]
+        OUTPUT FORMAT: JSON Object.
+        {
+          "questions": [
+            {
+              "question": "Question text?",
+              "options": ["Option A", "Option B", "Option C", "Option D"],
+              "correctAnswer": 2, // INTEGER (0-3). MUST MATCH index of the correct string in 'options'.
+              "explanation": "Detailed explanation."
+            }
+          ]
+        }
         
-        IMPORTANT: Return ONLY the JSON array.`;
+        IMPORTANT: Return ONLY the JSON object.`;
 
         let questions = [];
         let source = 'AI';
@@ -60,15 +76,20 @@ exports.getExamQuestions = async (req, res, next) => {
         try {
             console.log("🤖 STARTING AI QUESTION GEN FOR:", validSkillId);
             const startTime = Date.now();
-            const rawResponse = await generateCompletion(prompt, "You are a Teacher.", false);
 
-            const jsonMatch = rawResponse.match(/\[[\s\S]*\]/);
-            let jsonString = jsonMatch ? jsonMatch[0] : rawResponse;
+            // Try to generate unique questions with AI
+            // Use strict system prompt to reduce JSON parsing errors
+            const aiResponse = await generateCompletion(prompt, "You are a strict JSON API. Output ONLY valid JSON. No markdown, no commentary.", true);
 
-            // Clean markdown code blocks if present
-            jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '');
+            if (aiResponse.questions && Array.isArray(aiResponse.questions)) {
+                questions = aiResponse.questions;
+            } else if (Array.isArray(aiResponse)) {
+                questions = aiResponse; // Fallback if it returned array despite prompt
+            } else {
+                console.warn("AI returned unexpected structure:", aiResponse);
+                throw new Error("Invalid AI structure");
+            }
 
-            questions = JSON.parse(jsonString);
             console.log(`✅ AI GEN COMPLETE in ${(Date.now() - startTime) / 1000}s. Count: ${questions.length}`);
 
             // Save to QuestionBank (Fire and Forget or Await?)
@@ -96,10 +117,16 @@ exports.getExamQuestions = async (req, res, next) => {
             source = 'DB_FALLBACK';
 
             // Try to fetch from DB
-            const dbQuestions = await QuestionBank.aggregate([
-                { $match: { skill: validSkillId.toLowerCase() } },
-                { $sample: { size: count } }
-            ]);
+            let dbQuestions = [];
+            try {
+                dbQuestions = await QuestionBank.aggregate([
+                    { $match: { skill: validSkillId.toLowerCase() } },
+                    { $sample: { size: count } }
+                ]);
+            } catch (dbError) {
+                console.error("⚠️ DB Fallback failed:", dbError.message);
+                dbQuestions = []; // Continue to Hard Fallback
+            }
 
             if (dbQuestions && dbQuestions.length > 0) {
                 questions = dbQuestions;

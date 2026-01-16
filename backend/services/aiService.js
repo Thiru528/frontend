@@ -22,7 +22,7 @@ const generateCompletion = async (prompt, systemMessage = "You are a helpful AI 
             ],
             model: process.env.GROQ_MODEL || "llama3-8b-8192",
             temperature: 0.5,
-            max_tokens: 2048,
+            max_tokens: 4096,
         };
 
         if (jsonMode) {

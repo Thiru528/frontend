@@ -12,3 +12,11 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# Razorpay Proguard Rules
+-keep class com.razorpay.** { *; }
+-dontwarn com.razorpay.**
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.android.gms.**
+-keep class org.webkit.** { *; }
+      

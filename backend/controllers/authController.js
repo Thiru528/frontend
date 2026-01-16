@@ -5,7 +5,7 @@ const User = require('../models/User');
 // @access  Public
 exports.register = async (req, res, next) => {
     try {
-        const { name, email, password, targetRole } = req.body;
+        const { name, email, password, targetRole, experience } = req.body;
 
         let user = await User.findOne({ email });
 
@@ -17,7 +17,8 @@ exports.register = async (req, res, next) => {
             name,
             email,
             password,
-            targetRole
+            targetRole,
+            experience: experience || 'Entry Level' // Default fallback
         });
 
         sendTokenResponse(user, 201, res);
@@ -45,14 +46,21 @@ exports.login = async (req, res, next) => {
         const user = await User.findOne({ email }).select('+password');
 
         if (!user) {
-            return res.status(401).json({ success: false, message: 'Invalid credentials' });
+            return res.status(400).json({ success: false, message: 'Email is wrong' });
         }
 
         // Check if password matches
         const isMatch = await user.matchPassword(password);
 
         if (!isMatch) {
-            return res.status(401).json({ success: false, message: 'Invalid credentials' });
+            return res.status(401).json({ success: false, message: 'Password is wrong' });
+        }
+
+        // Check for premium expiration
+        if (user.isPremium && user.premiumExpiryDate && new Date() > user.premiumExpiryDate) {
+            user.isPremium = false;
+            user.planType = 'free';
+            await user.save({ validateBeforeSave: false });
         }
 
         // Update Last Login
@@ -71,6 +79,14 @@ exports.login = async (req, res, next) => {
 exports.getMe = async (req, res, next) => {
     try {
         const user = await User.findById(req.user.id);
+
+        // Check for premium expiration
+        if (user.isPremium && user.premiumExpiryDate && new Date() > user.premiumExpiryDate) {
+            user.isPremium = false;
+            user.planType = 'free';
+            await user.save({ validateBeforeSave: false });
+        }
+
         res.status(200).json({
             success: true,
             data: user

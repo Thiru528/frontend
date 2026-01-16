@@ -4,7 +4,7 @@ import { StyleSheet, View, Image } from 'react-native';
 const Logo = ({ size = 120, style }) => {
     return (
         <View style={[styles.container, { width: size, height: size }, style]}>
-            <Image source={require('../../assets/brand_logo.png')} style={[{ width: size, height: size, resizeMode: 'contain' }, style]} />
+            <Image source={require('../../assets/logosafe.png')} style={[{ width: size, height: size, resizeMode: 'contain' }, style]} />
         </View>
     );
 };

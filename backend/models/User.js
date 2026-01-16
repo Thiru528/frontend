@@ -78,8 +78,19 @@ const UserSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    lastStudyDate: {
+        type: Date
+    },
+    studyMinutes: {
+        type: Number,
+        default: 0
+    },
     lastLoginDate: {
         type: Date
+    },
+    hasResume: {
+        type: Boolean,
+        default: false
     },
     createdAt: {
         type: Date,

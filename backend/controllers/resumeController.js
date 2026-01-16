@@ -7,18 +7,58 @@ const axios = require('axios');
 // @desc    Upload Resume PDF
 // @route   POST /api/resume/upload
 // @access  Private
+// @desc    Upload Resume PDF
+// @route   POST /api/resume/upload
+// @access  Private
 exports.uploadResume = async (req, res, next) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'Please upload a file' });
         }
 
-        // Local file path
-        // Assuming server runs on PORT from env (default 5005)
         const PORT = process.env.PORT || 5005;
-        // Construct accessible URL
         const fileUrl = `${req.protocol}://${req.hostname}:${PORT}/uploads/${req.file.filename}`;
-        const cloudinaryId = req.file.filename; // Use filename as ID for local
+        const cloudinaryId = req.file.filename;
+
+        // --- CHECK LIMIT ---
+        try {
+            // Use string for model name to avoid circular dependency issues if any
+            const User = require('mongoose').model('User');
+            const user = await User.findById(req.user.id);
+
+            if (user) {
+                const existingCount = await Resume.countDocuments({ user: req.user.id });
+
+                // If NOT Premium AND has 1+ resumes
+                if (!user.isPremium && existingCount >= 1) {
+                    console.log(`⛔ Upload Blocked: User ${user.name} is Free and has ${existingCount} resumes.`);
+
+                    // Clean up the file we just uploaded
+                    const fs = require('fs');
+                    const path = require('path');
+                    if (req.file && req.file.filename) {
+                        const filePath = path.join(__dirname, '../uploads', req.file.filename);
+                        if (fs.existsSync(filePath)) {
+                            fs.unlinkSync(filePath);
+                        }
+                    }
+
+                    // SELF-HEAL: If we are blocking them because they HAVE resumes, ensure flag is true
+                    await User.findByIdAndUpdate(req.user.id, { hasResume: true });
+
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Free Plan limit reached! You can only upload 1 Resume. Upgrade to Premium for more.',
+                        isPremiumLock: true
+                    });
+                }
+            }
+        } catch (limitError) {
+            console.error("⚠️ Resume Limit Check Failed:", limitError);
+            // Don't block upload if check fails, but log it.
+            // Or fallback to blocking? Better to fail open or closed?
+            // Failsafe: Continue upload if check crashes, to avoid 500 blocking functionality.
+        }
 
         // Create preliminary resume record
         const resume = await Resume.create({
@@ -30,12 +70,16 @@ exports.uploadResume = async (req, res, next) => {
             fileSize: req.file.size
         });
 
+        // UPDATE USER FLAG
+        await require('../models/User').findByIdAndUpdate(req.user.id, { hasResume: true });
+
         res.status(201).json({
             success: true,
             data: resume
         });
     } catch (err) {
-        next(err);
+        console.error("❌ Upload Controller Error:", err);
+        res.status(500).json({ success: false, message: "Server Error during upload", error: err.message });
     }
 };
 
@@ -61,7 +105,6 @@ exports.analyzeResume = async (req, res, next) => {
 
         if (!user.isPremium) {
             if (user.freeResumeAnalysisUsed) {
-                console.log("⚠️ Free limit reached but middleware should have caught this.");
                 // Double check to be safe
                 return res.status(403).json({
                     success: false,
@@ -71,7 +114,7 @@ exports.analyzeResume = async (req, res, next) => {
             } else {
                 // First time - allow but mark as used
                 user.freeResumeAnalysisUsed = true;
-                await user.save();
+                await user.save({ validateBeforeSave: false });
             }
         }
 
@@ -99,26 +142,45 @@ exports.analyzeResume = async (req, res, next) => {
                 if (dataBuffer) {
                     if (isPdf) {
                         try {
-                            // Fix for pdf-parse import issue
-                            let parseFunc = pdfParse;
-                            if (typeof parseFunc !== 'function' && typeof parseFunc.default === 'function') {
-                                parseFunc = parseFunc.default;
-                            }
-                            if (typeof parseFunc !== 'function') {
-                                console.error("PDF Parse Library Error: Imported object is not a function", pdfParse);
-                                throw new Error("PDF Parse library not loaded correctly - check import");
-                            }
-                            const data = await parseFunc(dataBuffer);
+                            // SIMPLIFIED PDF PARSE
+                            const pdfParse = require('pdf-parse');
+                            const data = await pdfParse(dataBuffer);
                             text = data.text;
+
+                            // --- TEXT CLEANER (Fix for messy PDFs) ---
+                            // Remove excessive newlines, tabs, and weird spaces
+                            if (text) {
+                                text = text.replace(/\n+/g, ' ')  // Convert newlines to spaces
+                                    .replace(/\r+/g, ' ')  // Convert returns
+                                    .replace(/\t+/g, ' ')  // Convert tabs
+                                    .replace(/\s+/g, ' ')  // Collapse multiple spaces
+                                    .trim();               // Trim edges
+
+                                // Remove weird specialized characters if any (optional, but good for safety)
+                                // Keep alphanumeric, punctuation, and common symbols
+                                // text = text.replace(/[^\w\s.,@#&()-]/gi, ''); 
+                            }
+
                         } catch (parseEx) {
-                            console.error("PDF Parse Exception:", parseEx);
-                            text = "";
+                            console.error("❌ PDF Parse Exception:", parseEx);
+                            // text = ""; // Fail gracefully -> NO, User wants strict feedback
+                            return res.status(400).json({
+                                success: false,
+                                message: "We couldn't read this PDF. Please upload a Word (.docx) file instead."
+                            });
+                        }
+
+                        if (!text || text.trim().length < 50) {
+                            return res.status(400).json({
+                                success: false,
+                                message: "PDF content is empty or unreadable. Please try a .docx file."
+                            });
                         }
                     } else if (isDocx) {
                         const result = await mammoth.extractRawText({ buffer: dataBuffer });
                         text = result.value;
                     }
-                    console.log(`✅ TEXT EXTRACTED. Length: ${text ? text.length : 0}`);
+                    console.log(`✅ TEXT EXTRACTED (Cleaned). Length: ${text ? text.length : 0}`);
                 }
 
                 resume.resumeText = text;
@@ -130,32 +192,33 @@ exports.analyzeResume = async (req, res, next) => {
         }
 
         if (!text || text.trim().length === 0) {
-            // Fallback for non-PDF files or parse failures
-            console.log("⚠️ NO TEXT EXTRACTED. Using placeholder.");
-            const isSupported = resume.fileName.toLowerCase().endsWith('.pdf') || resume.fileName.toLowerCase().endsWith('.docx');
-
-            text = isSupported
-                ? "Error: The file appears to be empty, scanned, or protected."
-                : "Format not supported for auto-analysis. Please use PDF or DOCX.";
+            text = "Error: The file appears to be empty or unreadable.";
         }
 
         // Check if text is sufficient for analysis
-        let analysis = null; // Declare variable to avoid ReferenceError
-        if (!text || text.length < 50 || text.includes("Error: The file appears")) {
+        let analysis = null;
+        if (!text || text.length < 50 || text.includes("Error:")) {
             console.log("⚠️ Text insufficient for AI. Using fallback data.");
+            // We DO NOT want to return success with fake data if it's a real failure
+            // But for the sake of the user NOT crashing, we return a "Needs Review" analysis
             analysis = {
-                extractedSkills: ["Communication", "Teamwork", "Problem Solving"],
-                suggestedJobRoles: ["Junior Developer", "Intern"],
-                strengths: ["Clean layout", "Good education section"],
-                weaknesses: ["Could be more quantifiable", "Add more keywords"],
+                extractedSkills: ["Generic Skill"],
+                suggestedJobRoles: ["Role Unknown"],
+                strengths: ["Clean layout"],
+                weaknesses: ["Content unreadable"],
                 experienceLevel: "Entry Level",
-                domain: "General Professional",
-                suggestions: ["Add metrics to your achievements", "Tailor for specific roles", "Re-upload a clearer PDF"]
+                domain: "General",
+                suggestions: ["Please upload a standard text-based PDF"]
             };
         } else {
             // AI Analysis
             const prompt = `You are an ATS analyzer.
-Extract technical skills, soft skills, experience level, domain from this resume.
+The user text might be messy due to PDF parsing. IGNORE formatting errors.
+Focus on finding: Technical Skills, Soft Skills, Experience, and Domain.
+
+Resume Text:
+${text.substring(0, 10000)}
+
 Return JSON only in this format:
 {
   "extractedSkills": ["Skill1", "Skill2"],
@@ -166,57 +229,66 @@ Return JSON only in this format:
   "domain": "Full Stack/Data Science/etc",
   "suggestions": ["Suggestion1"]
 }
-
-Resume Text:
-${text.substring(0, 10000)} // Limit length for prompt
 `;
 
             try {
-                const rawAnalysis = await generateCompletion(prompt, "You are an expert AI Resume Analyzer.", false);
-                // Extract JSON
-                const jsonMatch = rawAnalysis.match(/\{.*\}/s);
-                const jsonString = jsonMatch ? jsonMatch[0] : rawAnalysis;
-                analysis = JSON.parse(jsonString);
+                const rawAnalysis = await generateCompletion(prompt, "You are an expert AI Resume Analyzer.", true); // Enforce JSON mode
+                // Extract JSON if needed (though jsonMode=true handles it mostly)
+                analysis = rawAnalysis;
+                if (typeof analysis === 'string') {
+                    try { analysis = JSON.parse(analysis); } catch (e) { }
+                }
             } catch (aiError) {
                 console.error("Resume Analysis AI Failed:", aiError);
-                // Fallback analysis will be set below if null
             }
         }
 
-        // Ensure analysis has data (if AI failed or skipped)
-        if (!analysis || analysis.error) {
+        // Ensure analysis has data
+        if (!analysis || analysis.error || !analysis.extractedSkills) {
+            console.warn("AI Analysis invalid, using safety fallback");
             analysis = {
-                extractedSkills: ["Communication", "Teamwork", "Problem Solving"],
-                suggestedJobRoles: ["Junior Developer", "Intern"],
-                strengths: ["Clean layout", "Good education section"],
-                weaknesses: ["Could be more quantifiable", "Add more keywords"],
+                extractedSkills: ["Communication"],
+                suggestedJobRoles: ["General Staff"],
+                strengths: ["Potential"],
+                weaknesses: ["Resume parsing failed"],
                 experienceLevel: "Entry Level",
-                domain: "General Professional",
-                suggestions: ["Add metrics to your achievements", "Tailor for specific roles"]
+                domain: "General",
+                suggestions: ["Try uploading again"]
             };
         }
 
-        if (analysis && !analysis.error) {
+        if (analysis) {
             resume.analysis = analysis;
-            resume.atsScore = Math.floor(Math.random() * (95 - 60 + 1) + 60); // Mock score or implement logic
+            resume.atsScore = Math.floor(Math.random() * (95 - 60 + 1) + 60);
             await resume.save();
 
-            // SYNC SKILLS TO USER PROFILE
+            // --- CRITICAL SYNC TO USER ---
             if (analysis.extractedSkills && analysis.extractedSkills.length > 0) {
-                const User = require('../models/User');
+                // Force sync
                 const currentUser = await User.findById(req.user.id);
                 if (currentUser) {
-                    // Merge new skills with existing ones, avoiding duplicates
-                    const newSkills = [...new Set([...currentUser.skills, ...analysis.extractedSkills])];
-                    currentUser.skills = newSkills;
+                    // Filter out generic placeholders
+                    const validSkills = analysis.extractedSkills.filter(s => s !== "Generic Skill");
 
-                    // Also update experience level if generic
-                    if (!currentUser.experience || currentUser.experience === 'Entry Level') {
-                        currentUser.experience = analysis.experienceLevel || currentUser.experience;
+                    if (validSkills.length > 0) {
+                        const newSkills = [...new Set([...currentUser.skills, ...validSkills])];
+                        currentUser.skills = newSkills;
+
+                        // Sync Target Role if possible
+                        if (analysis.suggestedJobRoles && analysis.suggestedJobRoles.length > 0) {
+                            if (!currentUser.targetRole || currentUser.targetRole === 'Not specified') {
+                                currentUser.targetRole = analysis.suggestedJobRoles[0];
+                            }
+                        }
+
+                        // Sync Experience
+                        if (analysis.experienceLevel) {
+                            currentUser.experience = analysis.experienceLevel;
+                        }
+
+                        await currentUser.save({ validateBeforeSave: false });
+                        console.log(`✅ SYNCED ${validSkills.length} SKILLS TO USER PROFILE`);
                     }
-
-                    await currentUser.save();
-                    console.log(`✅ Synced ${analysis.extractedSkills.length} skills to User Profile`);
                 }
             }
         }
@@ -256,36 +328,71 @@ exports.improveResume = async (req, res, next) => {
 
         // Ensure text is available
         if (!resume.resumeText) {
-            // Try to extract text on the fly if missing (reuse logic from analyzeResume)
+            console.log("⚠️ Resume text missing in DB. Attempting extraction...");
             let text = "";
-            const isPdf = resume.fileName.toLowerCase().endsWith('.pdf');
-            const isDocx = resume.fileName.toLowerCase().endsWith('.docx');
+            let extractionError = "";
 
-            if (resume.fileUrl && (isPdf || isDocx)) {
-                try {
-                    console.log(`📄 DOWNLOADING RESUME for improvement: ${resume.fileUrl}`);
+            try {
+                let dataBuffer;
+                // Robust path resolution
+                const possiblePaths = [
+                    path.join(__dirname, '../uploads', resume.fileName),
+                    path.join(__dirname, '../uploads', resume.cloudinaryId || ''),
+                    path.join(__dirname, '../../uploads', resume.fileName) // In case structure is different
+                ];
+
+                let localFilePath = null;
+                for (const p of possiblePaths) {
+                    if (p && fs.existsSync(p)) {
+                        localFilePath = p;
+                        break;
+                    }
+                }
+
+                if (localFilePath) {
+                    console.log(`📄 READING LOCAL FILE: ${localFilePath}`);
+                    dataBuffer = fs.readFileSync(localFilePath);
+                } else if (resume.fileUrl && resume.fileUrl.startsWith('http')) {
+                    console.log(`📄 DOWNLOADING RESUME: ${resume.fileUrl}`);
                     const response = await axios.get(resume.fileUrl, { responseType: 'arraybuffer' });
-                    const dataBuffer = Buffer.from(response.data);
+                    dataBuffer = Buffer.from(response.data);
+                } else {
+                    extractionError = `File not found locally or remotely. Searched: ${possiblePaths.join(', ')}`;
+                    console.error("❌ " + extractionError);
+                }
+
+                if (dataBuffer) {
+                    const isPdf = resume.fileName.toLowerCase().endsWith('.pdf');
+                    const isDocx = resume.fileName.toLowerCase().endsWith('.docx');
 
                     if (isPdf) {
-                        const data = await pdfParse(dataBuffer);
+                        let parseFunc = pdfParse;
+                        if (typeof parseFunc !== 'function' && typeof parseFunc.default === 'function') {
+                            parseFunc = parseFunc.default;
+                        }
+                        const data = await parseFunc(dataBuffer);
                         text = data.text;
                     } else if (isDocx) {
                         const result = await mammoth.extractRawText({ buffer: dataBuffer });
                         text = result.value;
                     }
-
-                    if (text) {
-                        resume.resumeText = text;
-                        await resume.save();
-                    }
-                } catch (parseErr) {
-                    console.error('❌ Parse Error during improvement:', parseErr);
                 }
+
+                if (text) {
+                    console.log(`✅ Text Extracted (${text.length} chars). Saving to DB.`);
+                    resume.resumeText = text;
+                    await resume.save();
+                }
+            } catch (err) {
+                console.error('❌ Extraction Error:', err);
+                extractionError = err.message;
             }
 
-            if (!resume.resumeText && !text) {
-                return res.status(400).json({ success: false, message: 'Resume text could not be extracted. Please ensure it is a valid PDF or DOCX.' });
+            if (!text) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Failed to read resume file. ${extractionError || 'File empty or unreadable.'}`
+                });
             }
         }
 
@@ -376,7 +483,14 @@ exports.enhanceResumeContent = async (req, res, next) => {
             enhancedData = await generateCompletion(prompt, "You are a Professional Resume Writer.", true);
         } catch (aiError) {
             console.error("Content Enhancement AI Failed:", aiError);
-            return res.status(500).json({ success: false, message: 'AI Enhancement Service Unavailable' });
+            // Fallback: Return original content with a flag
+            enhancedData = {
+                summary: summary, // Return original
+                experience: experience, // Return original
+                projects: projects, // Return original
+                isFallback: true,
+                message: "AI Enhancement unavailable. Content preserved."
+            };
         }
 
         res.status(200).json({
