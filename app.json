@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "CareerLoop AI",
+    "slug": "careerloop-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#6366F1"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#6366F1"
+      },
+      "package": "com.careerloop.app"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-font",
+      "./plugins/withRazorpay"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "43662035-1504-44b2-86a4-e9544559b139"
+      }
+    },
+    "owner": "thiru58"
+  }
+}
