@@ -242,7 +242,7 @@ const PremiumScreen = ({ navigation }) => {
         </View>
 
         <ScrollView
-          style={{ flex: 1 }}
+          style={{ flex: 1, width: '100%' }}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0f172a' },
   background: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
   safeArea: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 10 },
+  scrollContent: { padding: 20, paddingTop: 10, flexGrow: 1 },
 
   launchBanner: { alignItems: 'center', marginBottom: 20 },
   launchBannerGradient: {
